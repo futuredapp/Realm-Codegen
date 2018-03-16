@@ -1,0 +1,117 @@
+<%
+
+let numericTypes = Set(["Int", "Double", "Float"])
+let realmOptionalTypes = Set(["Bool?"]).union(numericTypes.map { $0+"?" })
+
+/// Returns default value for variable type
+func defaultValue(_ variable: Variable) -> String {
+    if variable.isOptional {
+        return " = nil"
+    } else if variable.typeName.name == "String" {
+        return " = \"\""
+    } else if numericTypes.contains(variable.typeName.name) {
+        return " = 0"
+    } else if variable.typeName.name == "Bool" {
+        return " = false"
+    } else if variable.typeName.name == "Date" {
+        return " = Date()"
+    } else if !variable.isOptional {
+        return "!"
+    } 
+    return ""
+}
+
+func prefixedTypeName(for type: Type?) -> String {
+    if let type = type {
+        return prefixedTypeName(for: type.parent) + type.localName + "Realm"
+    } else {
+        return ""
+    }
+}
+
+/// Returns either plain type, or type appended by "Realm" when type refers to other RealmPersistable object
+func customTypeName(for type: Type?, typeName: TypeName) -> String {
+    if let type = type, type.annotations["RealmPersistable"] != nil {
+        return prefixedTypeName(for: type) + (typeName.isOptional ? "?" : "")
+    } else {
+        return typeName.name
+    }
+}
+
+/// Returns output according to the variable type
+func outputTransform(variable: Variable, realmOptional: String = "", customPersistable: String = "", customEnum: String = "", array: String = "") -> String {
+    if realmOptionalTypes.contains(variable.typeName.name) {
+        return realmOptional
+    } else if variable.type as? Enum != nil {
+        return customEnum
+    } else if variable.isArray {
+        return array
+    } else if variable.type?.annotations["RealmPersistable"] != nil, variable.isOptional, customPersistable != "" {
+        return "?"+customPersistable
+    } else if variable.type?.annotations["RealmPersistable"] != nil {
+        return customPersistable
+    }
+    return ""
+}
+
+%>
+
+<% for type in types.structs where type.annotations["RealmPersistable"] != nil { %>
+// sourcery:file:<%= prefixedTypeName(for: type) %>.generated.swift
+import RealmSwift
+
+
+final class <%= prefixedTypeName(for: type) %>: Object { <% -%>
+<% for variable in type.storedVariables { -%>
+<% let actualTypeName: TypeName
+if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName {
+    actualTypeName = rawTypeName
+} else {
+    actualTypeName = variable.typeName
+}-%>
+<% if realmOptionalTypes.contains(actualTypeName.name) { %> 
+    let <%= variable.name %> = RealmOptional<<%= actualTypeName.unwrappedTypeName %>>() <% -%>
+<% } else if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName { %>
+    @objc dynamic var <%= variable.name %>: <%= rawTypeName %>? <% -%>
+<% } else if variable.isArray { %>    
+    var <%= variable.name %> = List<<%= customTypeName(for: variable.typeName.array!.elementType, typeName: variable.typeName.array!.elementTypeName) %>>()<% -%>
+<% } else { %>
+    @objc dynamic var <%= variable.name %>: <%= customTypeName(for: variable.type, typeName: variable.typeName) %><%= defaultValue(variable) -%> <% -%>
+<% } -%>
+<% } -%>
+
+<% for variable in type.storedVariables where variable.annotations["id"] != nil || variable.name == "id" { %>
+    override static func primaryKey() -> String? {
+        return "<%= variable.name %>"
+    }
+    <% break %>
+<% } %>
+}
+
+extension <%= prefixedTypeName(for: type) %>: RealmObject {
+    var model: <%= type.name -%> {
+        <%_ %><% let rawTypeEnums = type.storedVariables.filter { $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } -%>
+        <% if rawTypeEnums.count > 0 { %>guard <% } -%>
+        <%_ %><%= rawTypeEnums.map { "let \($0.name)Value = \($0.name), let \($0.name) = \($0.type!.name)(rawValue: \($0.name)Value)" }.joined(separator: ", ") -%>
+        <%_ %><% if rawTypeEnums.count > 0 { %> else {
+            fatalError("Enum case not found")
+        }<% } %>
+        return <%= type.name %>(<%= type.storedVariables.map { "\($0.name): \($0.name)"+outputTransform(variable: $0, realmOptional: ".value", customPersistable: ".model", array: ".array") }.joined(separator: ", ") %>)
+    }
+
+    convenience init(model: <%= type.name %>) {
+        self.init()
+        <% for variable in type.storedVariables { %>
+        self.<%= variable.name %><%= outputTransform(variable: variable, realmOptional: ".value") %> = model.<%= variable.name %><%= outputTransform(variable: variable, customPersistable: ".persistenceObject", customEnum: ".rawValue", array: ".realmList") -%>
+        <% } %>
+    }
+}
+
+extension <%= type.name %>: RealmRepresentable {
+    var persistenceObject: <%= prefixedTypeName(for: type) %> {
+        return <%= prefixedTypeName(for: type) %>(model: self)
+    }
+}
+
+// sourcery:end
+<% } %>
