@@ -65,14 +65,8 @@ import RealmSwift
 
 final class <%= prefixedTypeName(for: type) %>: Object { <% -%>
 <% for variable in type.storedVariables { -%>
-<% let actualTypeName: TypeName
-if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName {
-    actualTypeName = rawTypeName
-} else {
-    actualTypeName = variable.typeName
-}-%>
-<% if realmOptionalTypes.contains(actualTypeName.name) { %> 
-    let <%= variable.name %> = RealmOptional<<%= actualTypeName.unwrappedTypeName %>>() <% -%>
+<% if realmOptionalTypes.contains(variable.typeName.name) { %> 
+    let <%= variable.name %> = RealmOptional<<%= variable.typeName.unwrappedTypeName %>>() <% -%>
 <% } else if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName { %>
     @objc dynamic var <%= variable.name %>: <%= rawTypeName %><% if variable.isOptional { %>?<% } else { %>! <% } -%>
 <% } else if variable.isArray { %>    
