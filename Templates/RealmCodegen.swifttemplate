@@ -42,6 +42,8 @@ func customTypeName(for type: Type?, typeName: TypeName) -> String {
 func outputTransform(variable: Variable, realmOptional: String = "", customPersistable: String = "", customEnum: String = "", array: String = "") -> String {
     if realmOptionalTypes.contains(variable.typeName.name) {
         return realmOptional
+    } else if variable.type as? Enum != nil, variable.isOptional && customEnum != "" {
+        return "?"+customEnum
     } else if variable.type as? Enum != nil {
         return customEnum
     } else if variable.isArray {
@@ -72,7 +74,7 @@ if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName {
 <% if realmOptionalTypes.contains(actualTypeName.name) { %> 
     let <%= variable.name %> = RealmOptional<<%= actualTypeName.unwrappedTypeName %>>() <% -%>
 <% } else if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName { %>
-    @objc dynamic var <%= variable.name %>: <%= rawTypeName %>? <% -%>
+    @objc dynamic var <%= variable.name %>: <%= rawTypeName %><% if variable.isOptional { %>?<% } else { %>! <% } -%>
 <% } else if variable.isArray { %>    
     var <%= variable.name %> = List<<%= customTypeName(for: variable.typeName.array!.elementType, typeName: variable.typeName.array!.elementTypeName) %>>()<% -%>
 <% } else { %>
@@ -90,12 +92,16 @@ if let type = variable.type as? Enum, let rawTypeName = type.rawTypeName {
 
 extension <%= prefixedTypeName(for: type) %>: RealmObject {
     var model: <%= type.name -%> {
-        <%_ %><% let rawTypeEnums = type.storedVariables.filter { $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } -%>
-        <% if rawTypeEnums.count > 0 { %>guard <% } -%>
-        <%_ %><%= rawTypeEnums.map { "let \($0.name)Value = \($0.name), let \($0.name) = \($0.type!.name)(rawValue: \($0.name)Value)" }.joined(separator: ", ") -%>
-        <%_ %><% if rawTypeEnums.count > 0 { %> else {
+        <%_ %><% 
+        let rawTypeOptionalEnums = type.storedVariables.filter { $0.isOptional && $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } 
+        let rawTypeNonOptionalEnums = type.storedVariables.filter { !$0.isOptional && $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } 
+        -%>
+        <% if rawTypeNonOptionalEnums.count > 0 { %>guard <% } -%>
+        <%_ %><%= rawTypeNonOptionalEnums.map { "let \($0.name)Value = \($0.name), let \($0.name) = \($0.type!.name)(rawValue: \($0.name)Value)" }.joined(separator: ", ") -%>
+        <%_ %><% if rawTypeNonOptionalEnums.count > 0 { %> else {
             fatalError("Enum case not found")
         }<% } %>
+        <%= rawTypeOptionalEnums.map { "let \($0.name) = self.\($0.name).flatMap { \($0.type!.name)(rawValue: $0) }" }.joined(separator: ", ") %>
         return <%= type.name %>(<%= type.storedVariables.map { "\($0.name): \($0.name)"+outputTransform(variable: $0, realmOptional: ".value", customPersistable: ".model", array: ".array") }.joined(separator: ", ") %>)
     }
 
