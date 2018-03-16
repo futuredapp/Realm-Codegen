@@ -33,13 +33,15 @@ func prefixedTypeName(for type: Type?) -> String {
 func customTypeName(for type: Type?, typeName: TypeName) -> String {
     if let type = type, type.annotations["RealmPersistable"] != nil {
         return prefixedTypeName(for: type) + (typeName.isOptional ? "?" : "")
+    } else if let type = type, let refinedType = type.variables.filter({ $0.name == "persistableValue" }).first?.typeName, type.implements["RealmRefined"] != nil {
+        return refinedType.name
     } else {
         return typeName.name
     }
 }
 
 /// Returns output according to the variable type
-func outputTransform(variable: Variable, realmOptional: String = "", customPersistable: String = "", customEnum: String = "", array: String = "") -> String {
+func outputTransform(variable: Variable, realmOptional: String = "", customPersistable: String = "", customEnum: String = "", array: String = "", refined: String = "") -> String {
     if realmOptionalTypes.contains(variable.typeName.name) {
         return realmOptional
     } else if variable.type as? Enum != nil, variable.isOptional && customEnum != "" {
@@ -52,6 +54,8 @@ func outputTransform(variable: Variable, realmOptional: String = "", customPersi
         return "?"+customPersistable
     } else if variable.type?.annotations["RealmPersistable"] != nil {
         return customPersistable
+    } else if variable.type?.implements["RealmRefined"] != nil {
+        return refined
     }
     return ""
 }
@@ -88,7 +92,8 @@ extension <%= prefixedTypeName(for: type) %>: RealmObject {
     var model: <%= type.name -%> {
         <%_ %><% 
         let rawTypeOptionalEnums = type.storedVariables.filter { $0.isOptional && $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } 
-        let rawTypeNonOptionalEnums = type.storedVariables.filter { !$0.isOptional && $0.type is Enum && ($0.type as! Enum).rawTypeName != nil } 
+        let rawTypeNonOptionalEnums = type.storedVariables.filter { !$0.isOptional && $0.type is Enum && ($0.type as! Enum).rawTypeName != nil }
+        let refinedTypes = type.storedVariables.filter { $0.type?.implements["RealmRefined"] != nil } 
         -%>
         <% if rawTypeNonOptionalEnums.count > 0 { %>guard <% } -%>
         <%_ %><%= rawTypeNonOptionalEnums.map { "let \($0.name)Value = \($0.name), let \($0.name) = \($0.type!.name)(rawValue: \($0.name)Value)" }.joined(separator: ", ") -%>
@@ -96,13 +101,14 @@ extension <%= prefixedTypeName(for: type) %>: RealmObject {
             fatalError("Enum case not found")
         }<% } %>
         <%= rawTypeOptionalEnums.map { "let \($0.name) = self.\($0.name).flatMap { \($0.type!.name)(rawValue: $0) }" }.joined(separator: ", ") %>
+        <%= refinedTypes.map { "let \($0.name) = \($0.type!.name)(persistedValue: self.\($0.name))" }.joined(separator: ", ") %>
         return <%= type.name %>(<%= type.storedVariables.map { "\($0.name): \($0.name)"+outputTransform(variable: $0, realmOptional: ".value", customPersistable: ".model", array: ".array") }.joined(separator: ", ") %>)
     }
 
     convenience init(model: <%= type.name %>) {
         self.init()
         <% for variable in type.storedVariables { %>
-        self.<%= variable.name %><%= outputTransform(variable: variable, realmOptional: ".value") %> = model.<%= variable.name %><%= outputTransform(variable: variable, customPersistable: ".persistenceObject", customEnum: ".rawValue", array: ".realmList") -%>
+        self.<%= variable.name %><%= outputTransform(variable: variable, realmOptional: ".value") %> = model.<%= variable.name %><%= outputTransform(variable: variable, customPersistable: ".persistenceObject", customEnum: ".rawValue", array: ".realmList", refined: ".persistableValue") -%>
         <% } %>
     }
 }

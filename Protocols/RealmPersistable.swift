@@ -55,3 +55,11 @@ extension Array where Element: RealmRepresentable {
         return self.map { $0.persistenceObject }
     }
 }
+
+protocol RealmRefined {
+    associatedtype PersistableType
+
+    var persistableValue: PersistableType { get }
+
+    init(persistedValue: PersistableType)
+}
